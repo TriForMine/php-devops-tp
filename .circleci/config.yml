@@ -59,9 +59,10 @@ setup_infisical: &setup_infisical
   run:
     name: Setup Infisical Authentication
     command: |
-      # Authenticate using machine identity and get access token
-      export INFISICAL_TOKEN=$(infisical login --method=universal-auth --client-id="$INFISICAL_CLIENT_ID" --client-secret="$INFISICAL_CLIENT_SECRET" --silent --plain)
-      infisical --version
+      # Authenticate using machine identity and persist token
+      INFISICAL_TOKEN=$(infisical login --method=universal-auth --client-id="$INFISICAL_CLIENT_ID" --client-secret="$INFISICAL_CLIENT_SECRET" --silent --plain)
+      echo "export INFISICAL_TOKEN=$INFISICAL_TOKEN" >> $BASH_ENV
+      echo "Infisical authentication successful"
 
 # This main executor is used by all jobs unless otherwise specified
 executors:
@@ -197,9 +198,19 @@ jobs:
             REPOSITORY=$(echo "ghcr.io/$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME" | tr '[:upper:]' '[:lower:]' | tr -d '_')
             TAG=$(echo $CIRCLE_BRANCH | tr '[:upper:]' '[:lower:]' | tr '/' '-' | tr -cd '[:alnum:]._-' | cut -c 1-128)
 
+            # Export GHCR secrets directly to environment using Infisical
+            export $(infisical export --env=staging --path="/docker" --projectId="$INFISICAL_PROJECT_ID" --format=dotenv | xargs)
+
+            # Verify credentials are available
+            if [ -z "$GHCR_PAT" ] || [ -z "$GHCR_USERNAME" ]; then
+              echo "Error: GHCR credentials not found in Infisical"
+              echo "Expected secrets in staging environment at /docker path:"
+              echo "- GHCR_PAT"
+              echo "- GHCR_USERNAME"
+              exit 1
+            fi
+
             # Login to GHCR using Infisical secrets
-            infisical export --env=staging --path="/docker" --projectId="$INFISICAL_PROJECT_ID" --format=dotenv-export > .env.docker
-            source .env.docker
             echo "$GHCR_PAT" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
 
             # Build the Docker image
@@ -230,14 +241,26 @@ jobs:
           name: Deploy to AWS
           command: |
             set -x
-            infisical export --env=staging --path="/ssh" --projectId="$INFISICAL_PROJECT_ID" --format=dotenv-export > .env.ssh
-            source .env.ssh
+
+            # Export SSH secrets directly to environment using Infisical
+            export $(infisical export --env=staging --path="/ssh" --projectId="$INFISICAL_PROJECT_ID" --format=dotenv | xargs)
+
+            # Verify SSH credentials are available
+            if [ -z "$STAGING_SSH_USER" ] || [ -z "$STAGING_SSH_HOST" ] || [ -z "$STAGING_DEPLOY_DIRECTORY" ]; then
+              echo "Error: SSH deployment credentials not found in Infisical"
+              echo "Expected secrets in staging environment at /ssh path:"
+              echo "- STAGING_SSH_USER"
+              echo "- STAGING_SSH_HOST"
+              echo "- STAGING_DEPLOY_DIRECTORY"
+              exit 1
+            fi
+
             ssh -o StrictHostKeyChecking=no $STAGING_SSH_USER@$STAGING_SSH_HOST \<< EOF
             PHP_FPM_VERSION=\$(php -v | head -n 1 | cut -d ' ' -f 2 | cut -d '.' -f 1-2)
             cd $STAGING_DEPLOY_DIRECTORY
             git pull origin $CIRCLE_BRANCH
             composer install --optimize-autoloader --no-interaction --prefer-dist
-            (flock -w 10 9 || exit 1; sudo -S service php\${PHP_FPM_VERSION}-fpm restart ) 9>/tmp/fpm.lock
+            (flock -w 10 9 || exit 1; sudo -S service php\${PHP_FPM_VERSION}-fpm restart ) 9>/tmp/fmp.lock
             EOF
 
 #  deploy-ssh-production:

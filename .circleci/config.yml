@@ -59,8 +59,28 @@ setup_infisical: &setup_infisical
   run:
     name: Setup Infisical Authentication
     command: |
+      # Check if Machine Identity credentials are set
+      if [ -z "$INFISICAL_CLIENT_ID" ] || [ -z "$INFISICAL_CLIENT_SECRET" ]; then
+        echo "Error: Missing Infisical Machine Identity credentials"
+        echo "Please set INFISICAL_CLIENT_ID and INFISICAL_CLIENT_SECRET in CircleCI"
+        exit 1
+      fi
+
       # Authenticate using machine identity and persist token
-      INFISICAL_TOKEN=$(infisical login --method=universal-auth --client-id="$INFISICAL_CLIENT_ID" --client-secret="$INFISICAL_CLIENT_SECRET" --silent --plain)
+      echo "Authenticating with Infisical..."
+      INFISICAL_TOKEN=$(infisical login --method=universal-auth --client-id="$INFISICAL_CLIENT_ID" --client-secret="$INFISICAL_CLIENT_SECRET" --silent --plain 2>&1)
+
+      # Check if authentication was successful
+      if [ $? -ne 0 ] || [ -z "$INFISICAL_TOKEN" ]; then
+        echo "Error: Infisical authentication failed"
+        echo "Response: $INFISICAL_TOKEN"
+        echo "Please verify your Machine Identity credentials in CircleCI:"
+        echo "- INFISICAL_CLIENT_ID"
+        echo "- INFISICAL_CLIENT_SECRET"
+        echo "- INFISICAL_PROJECT_ID"
+        exit 1
+      fi
+
       echo "export INFISICAL_TOKEN=$INFISICAL_TOKEN" >> $BASH_ENV
       echo "Infisical authentication successful"
 

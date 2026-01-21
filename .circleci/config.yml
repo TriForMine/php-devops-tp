@@ -51,17 +51,16 @@ install_infisical: &install_infisical
   run:
     name: Install Infisical CLI
     command: |
-      # Install Infisical CLI - Updated method
-      curl -o infisical https://infisical.com/cli/linux/amd64/latest/infisical
-      chmod +x infisical
-      sudo mv infisical /usr/local/bin/
+      # Install Infisical CLI - Official repository (as of 04/08/25)
+      curl -1sLf 'https://artifacts-cli.infisical.com/setup.deb.sh' | sudo -E bash
+      sudo apt-get update && sudo apt-get install -y infisical
 
 setup_infisical: &setup_infisical
   run:
     name: Setup Infisical Authentication
     command: |
-      # Authenticate using machine identity
-      infisical login --method=universal-auth --client-id="$INFISICAL_CLIENT_ID" --client-secret="$INFISICAL_CLIENT_SECRET"
+      # Use service token directly (simpler method)
+      export INFISICAL_TOKEN="$INFISICAL_TOKEN"
       infisical --version
 
 # This main executor is used by all jobs unless otherwise specified
@@ -199,7 +198,9 @@ jobs:
             TAG=$(echo $CIRCLE_BRANCH | tr '[:upper:]' '[:lower:]' | tr '/' '-' | tr -cd '[:alnum:]._-' | cut -c 1-128)
 
             # Login to GHCR using Infisical secrets
-            infisical run --env=staging --path="/docker" -- sh -c 'echo "$GHCR_PAT" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin'
+            infisical secrets --env=staging --path="/docker" --format=dotenv > .env.docker
+            source .env.docker
+            echo "$GHCR_PAT" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
 
             # Build the Docker image
             docker build \
@@ -229,15 +230,15 @@ jobs:
           name: Deploy to AWS
           command: |
             set -x
-            infisical run --env=staging --path="/ssh" -- sh -c '
+            infisical secrets --env=staging --path="/ssh" --format=dotenv > .env.ssh
+            source .env.ssh
             ssh -o StrictHostKeyChecking=no $STAGING_SSH_USER@$STAGING_SSH_HOST \<< EOF
-            PHP_FPM_VERSION=$(php -v | head -n 1 | cut -d " " -f 2 | cut -d "." -f 1-2)
+            PHP_FPM_VERSION=\$(php -v | head -n 1 | cut -d ' ' -f 2 | cut -d '.' -f 1-2)
             cd $STAGING_DEPLOY_DIRECTORY
             git pull origin $CIRCLE_BRANCH
             composer install --optimize-autoloader --no-interaction --prefer-dist
             (flock -w 10 9 || exit 1; sudo -S service php\${PHP_FPM_VERSION}-fpm restart ) 9>/tmp/fpm.lock
             EOF
-            '
 
 #  deploy-ssh-production:
 # It's up to you :)

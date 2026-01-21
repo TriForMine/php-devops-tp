@@ -205,7 +205,9 @@ jobs:
       - *attach_workspace
       - run:
           name: Install PHP Insights
-          command: composer require --dev nunomaduro/phpinsights
+          command: |
+            composer config allow-plugins.dealerdirect/phpcodesniffer-composer-installer true
+            composer require --dev nunomaduro/phpinsights --no-interaction
       - run:
           name: Run PHP Insights
           command: |

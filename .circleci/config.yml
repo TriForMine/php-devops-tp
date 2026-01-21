@@ -59,8 +59,8 @@ setup_infisical: &setup_infisical
   run:
     name: Setup Infisical Authentication
     command: |
-      # Use service token directly (simpler method)
-      export INFISICAL_TOKEN="$INFISICAL_TOKEN"
+      # Authenticate using machine identity and get access token
+      export INFISICAL_TOKEN=$(infisical login --method=universal-auth --client-id="$INFISICAL_CLIENT_ID" --client-secret="$INFISICAL_CLIENT_SECRET" --silent --plain)
       infisical --version
 
 # This main executor is used by all jobs unless otherwise specified
@@ -198,7 +198,7 @@ jobs:
             TAG=$(echo $CIRCLE_BRANCH | tr '[:upper:]' '[:lower:]' | tr '/' '-' | tr -cd '[:alnum:]._-' | cut -c 1-128)
 
             # Login to GHCR using Infisical secrets
-            infisical secrets --env=staging --path="/docker" --output=dotenv > .env.docker
+            infisical export --env=staging --path="/docker" --format=dotenv-export > .env.docker
             source .env.docker
             echo "$GHCR_PAT" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
 
@@ -230,7 +230,7 @@ jobs:
           name: Deploy to AWS
           command: |
             set -x
-            infisical secrets --env=staging --path="/ssh" --output=dotenv > .env.ssh
+            infisical export --env=staging --path="/ssh" --format=dotenv-export > .env.ssh
             source .env.ssh
             ssh -o StrictHostKeyChecking=no $STAGING_SSH_USER@$STAGING_SSH_HOST \<< EOF
             PHP_FPM_VERSION=\$(php -v | head -n 1 | cut -d ' ' -f 2 | cut -d '.' -f 1-2)

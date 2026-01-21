@@ -199,23 +199,20 @@ jobs:
           path: phpmetrics-report.json
           destination: phpmetrics-json
 
-  metrics-phploc:
+  metrics-phpinsights:
     executor: php-executor
     steps:
       - *attach_workspace
       - run:
-          name: Install PHPLOC
-          command: composer require --dev phploc/phploc
+          name: Install PHP Insights
+          command: composer require --dev nunomaduro/phpinsights
       - run:
-          name: Run PHPLOC
+          name: Run PHP Insights
           command: |
-            ./vendor/bin/phploc --exclude=vendor --log-xml=phploc-report.xml --log-csv=phploc-report.csv .
+            ./vendor/bin/phpinsights --no-interaction --format=json > phpinsights-report.json || true
       - store_artifacts:
-          path: phploc-report.xml
-          destination: phploc-xml
-      - store_artifacts:
-          path: phploc-report.csv
-          destination: phploc-csv
+          path: phpinsights-report.json
+          destination: phpinsights-report
 
   lint-phpmd:
     executor: php-executor
@@ -393,7 +390,7 @@ workflows:
       - metrics-phpmetrics:
           requires:
             - build-setup
-      - metrics-phploc:
+      - metrics-phpinsights:
           requires:
             - build-setup
       - hold:
@@ -405,7 +402,7 @@ workflows:
             - security-check-dependencies
             - test-phpunit
             - metrics-phpmetrics
-            - metrics-phploc
+            - metrics-phpinsights
           filters:
             branches:
               only:

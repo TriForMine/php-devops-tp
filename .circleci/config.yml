@@ -51,16 +51,17 @@ install_infisical: &install_infisical
   run:
     name: Install Infisical CLI
     command: |
-      # Install Infisical CLI for Ubuntu/Debian
-      curl -1sLf 'https://dl.cloudsmith.io/public/infisical/infisical-cli/setup.deb.sh' | sudo -E bash
-      sudo apt-get update && sudo apt-get install -y infisical
+      # Install Infisical CLI - Updated method
+      curl -o infisical https://infisical.com/cli/linux/amd64/latest/infisical
+      chmod +x infisical
+      sudo mv infisical /usr/local/bin/
 
 setup_infisical: &setup_infisical
   run:
     name: Setup Infisical Authentication
     command: |
-      # Authenticate using machine identity token
-      export INFISICAL_TOKEN="$INFISICAL_TOKEN"
+      # Authenticate using machine identity
+      infisical login --method=universal-auth --client-id="$INFISICAL_CLIENT_ID" --client-secret="$INFISICAL_CLIENT_SECRET"
       infisical --version
 
 # This main executor is used by all jobs unless otherwise specified

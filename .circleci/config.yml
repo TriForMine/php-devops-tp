@@ -181,6 +181,72 @@ jobs:
           name: Run PHPUnit
           command: ./vendor/bin/phpunit --testsuite=Unit
 
+  metrics-phpmetrics:
+    executor: php-executor
+    steps:
+      - *attach_workspace
+      - run:
+          name: Install PHPMetrics
+          command: composer require --dev phpmetrics/phpmetrics
+      - run:
+          name: Run PHPMetrics
+          command: |
+            ./vendor/bin/phpmetrics --report-html=phpmetrics-report.html --report-json=phpmetrics-report.json --exclude=vendor .
+      - store_artifacts:
+          path: phpmetrics-report.html
+          destination: phpmetrics-report
+      - store_artifacts:
+          path: phpmetrics-report.json
+          destination: phpmetrics-json
+
+  metrics-phploc:
+    executor: php-executor
+    steps:
+      - *attach_workspace
+      - run:
+          name: Install PHPLOC
+          command: composer require --dev phploc/phploc
+      - run:
+          name: Run PHPLOC
+          command: |
+            ./vendor/bin/phploc --exclude=vendor --log-xml=phploc-report.xml --log-csv=phploc-report.csv .
+      - store_artifacts:
+          path: phploc-report.xml
+          destination: phploc-xml
+      - store_artifacts:
+          path: phploc-report.csv
+          destination: phploc-csv
+
+  lint-phpmd:
+    executor: php-executor
+    steps:
+      - *attach_workspace
+      - run:
+          name: Install PHPMD
+          command: composer require --dev phpmd/phpmd
+      - run:
+          name: Run PHPMD
+          command: |
+            ./vendor/bin/phpmd src,public xml phpmd.xml --reportfile phpmd-report.xml --exclude vendor || true
+      - store_artifacts:
+          path: phpmd-report.xml
+          destination: phpmd-report
+
+  lint-phpdoc-check:
+    executor: php-executor
+    steps:
+      - *attach_workspace
+      - run:
+          name: Install PHP Doc Check
+          command: composer require --dev niels-de-blaauw/php-doc-check
+      - run:
+          name: Run PHP Doc Check
+          command: |
+            ./vendor/bin/phpdoccheck --directory=src --format=json > phpdoc-report.json || true
+      - store_artifacts:
+          path: phpdoc-report.json
+          destination: phpdoc-report
+
   build-docker-image:
     executor: builder-executor
     steps:
@@ -246,8 +312,63 @@ jobs:
             (flock -w 10 9 || exit 1; sudo -S service php\${PHP_FPM_VERSION}-fpm restart ) 9>/tmp/fmp.lock
             EOF
 
-#  deploy-ssh-production:
-# It's up to you :)
+  deploy-ssh-production:
+    executor: simple-executor
+    steps:
+      - add_ssh_keys:
+          fingerprints:
+            - "${PRODUCTION_SSH_FINGERPRINT}"
+      - *install_infisical
+      - *setup_infisical
+      - deploy:
+          name: Deploy to AWS EC2 Production
+          command: |
+            set -x
+
+            # Get production secrets from Infisical
+            export $(infisical export --env=production --path="/docker" --projectId="$INFISICAL_PROJECT_ID" --domain=https://eu.infisical.com --format=dotenv | xargs)
+
+            # Sanitize the repository name and branch name for image tag
+            REPOSITORY=$(echo "ghcr.io/triformine/php-devops-tp" | tr '[:upper:]' '[:lower:]')
+            TAG=$(echo $CIRCLE_BRANCH | tr '[:upper:]' '[:lower:]' | tr '/' '-' | tr -cd '[:alnum:]._-' | cut -c 1-128)
+
+            # Deploy with Docker
+            ssh -o StrictHostKeyChecking=no $PRODUCTION_SSH_USER@$PRODUCTION_SSH_HOST \<< EOF
+            set -e
+
+            # Install Docker if not present
+            if ! command -v docker &> /dev/null; then
+                echo "Installing Docker..."
+                curl -fsSL https://get.docker.com -o get-docker.sh
+                sudo sh get-docker.sh
+                sudo usermod -aG docker \$USER
+                sudo systemctl start docker
+                sudo systemctl enable docker
+            fi
+
+            # Login to GHCR
+            echo "$GHCR_PAT" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
+
+            # Pull the latest image
+            docker pull $REPOSITORY:$TAG
+
+            # Stop and remove existing container
+            docker stop php-app || true
+            docker rm php-app || true
+
+            # Run new container
+            docker run -d \
+              --name php-app \
+              --restart unless-stopped \
+              -p 80:80 \
+              $REPOSITORY:$TAG
+
+            # Health check
+            sleep 10
+            curl -f http://localhost/ || (echo "Health check failed" && exit 1)
+
+            echo "Docker deployment completed successfully"
+            EOF
 
 workflows:
   main_workflow:
@@ -257,28 +378,48 @@ workflows:
       - lint-phpcs:
           requires:
             - build-setup
+      - lint-phpmd:
+          requires:
+            - build-setup
+      - lint-phpdoc-check:
+          requires:
+            - build-setup
       - security-check-dependencies:
           requires:
             - build-setup
       - test-phpunit:
           requires:
             - build-setup
+      - metrics-phpmetrics:
+          requires:
+            - build-setup
+      - metrics-phploc:
+          requires:
+            - build-setup
       - hold:
           type: approval
+          requires:
+            - lint-phpcs
+            - lint-phpmd
+            - lint-phpdoc-check
+            - security-check-dependencies
+            - test-phpunit
+            - metrics-phpmetrics
+            - metrics-phploc
           filters:
             branches:
               only:
                 - main
                 - master
                 - /^release\/.*/
-      # - deploy-ssh-production:  # Commented until implemented
-      #     requires:
-      #       - hold
-      #     filters:
-      #       branches:
-      #         only:
-      #           - main
-      #           - master
+      - deploy-ssh-production:
+          requires:
+            - hold
+          filters:
+            branches:
+              only:
+                - main
+                - master
       - deploy-ssh-staging:
           requires:
             - hold

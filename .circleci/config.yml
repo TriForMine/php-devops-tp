@@ -46,6 +46,23 @@ attach_workspace: &attach_workspace
     # Must be absolute path or relative path from working_directory
     at: ~/project
 
+# Infisical configuration for secure secret management
+install_infisical: &install_infisical
+  run:
+    name: Install Infisical CLI
+    command: |
+      # Install Infisical CLI for Ubuntu/Debian
+      curl -1sLf 'https://dl.cloudsmith.io/public/infisical/infisical-cli/setup.deb.sh' | sudo -E bash
+      sudo apt-get update && sudo apt-get install -y infisical
+
+setup_infisical: &setup_infisical
+  run:
+    name: Setup Infisical Authentication
+    command: |
+      # Authenticate using machine identity token
+      export INFISICAL_TOKEN="$INFISICAL_TOKEN"
+      infisical --version
+
 # This main executor is used by all jobs unless otherwise specified
 executors:
   php-executor:
@@ -58,7 +75,7 @@ executors:
     resource_class: small
     shell: /bin/bash
     docker:
-      - image: cimg/php:8.1-node
+      - image: cimg/php:8.2-node
         name: localhost
   simple-executor:
     resource_class: small
@@ -163,6 +180,8 @@ jobs:
     executor: builder-executor
     steps:
       - checkout
+      - *install_infisical
+      - *setup_infisical
       - setup_remote_docker:
           docker_layer_caching: true
       - run:
@@ -178,8 +197,8 @@ jobs:
             REPOSITORY=$(echo "ghcr.io/$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME" | tr '[:upper:]' '[:lower:]' | tr -d '_')
             TAG=$(echo $CIRCLE_BRANCH | tr '[:upper:]' '[:lower:]' | tr '/' '-' | tr -cd '[:alnum:]._-' | cut -c 1-128)
 
-            # Login to GHCR
-            echo "$GHCR_PAT" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
+            # Login to GHCR using Infisical secrets
+            infisical run --env=staging --path="/docker" -- sh -c 'echo "$GHCR_PAT" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin'
 
             # Build the Docker image
             docker build \
@@ -200,6 +219,8 @@ jobs:
   deploy-ssh-staging:
     executor: simple-executor
     steps:
+      - *install_infisical
+      - *setup_infisical
       - add_ssh_keys:
           fingerprints:
             - "${STAGING_SSH_FINGERPRINT}"
@@ -207,13 +228,15 @@ jobs:
           name: Deploy to AWS
           command: |
             set -x
-            ssh -o StrictHostKeyChecking=no $STAGING_SSH_USER@$STAGING_SSH_HOST \<< EOF
-            PHP_FPM_VERSION=$(php -v | head -n 1 | cut -d ' ' -f 2 | cut -d '.' -f 1-2)
+            infisical run --env=staging --path="/ssh" -- sh -c '
+            ssh -o StrictHostKeyChecking=no $STAGING_SSH_USER@$STAGING_SSH_HOST << EOF
+            PHP_FPM_VERSION=$(php -v | head -n 1 | cut -d " " -f 2 | cut -d "." -f 1-2)
             cd $STAGING_DEPLOY_DIRECTORY
             git pull origin $CIRCLE_BRANCH
             composer install --optimize-autoloader --no-interaction --prefer-dist
-            (flock -w 10 9 || exit 1; sudo -S service php${PHP_FPM_VERSION}-fpm restart ) 9>/tmp/fpm.lock
+            (flock -w 10 9 || exit 1; sudo -S service php\${PHP_FPM_VERSION}-fpm restart ) 9>/tmp/fpm.lock
             EOF
+            '
 
 #  deploy-ssh-production:
 # It's up to you :)

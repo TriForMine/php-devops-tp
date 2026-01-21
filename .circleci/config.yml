@@ -46,7 +46,7 @@ attach_workspace: &attach_workspace
     # Must be absolute path or relative path from working_directory
     at: ~/project
 
-# Infisical configuration for secure secret management
+# Infisical configuration for application secrets only
 install_infisical: &install_infisical
   run:
     name: Install Infisical CLI
@@ -63,36 +63,10 @@ setup_infisical: &setup_infisical
     command: |
       # Set EU Cloud domain
       export INFISICAL_API_URL=https://eu.infisical.com
-
-      # Try Machine Identity first, fallback to Service Token
-      if [ -n "$INFISICAL_CLIENT_ID" ] && [ -n "$INFISICAL_CLIENT_SECRET" ]; then
-        echo "Attempting Machine Identity authentication with EU Cloud..."
-        INFISICAL_TOKEN=$(infisical login --method=universal-auth --client-id="$INFISICAL_CLIENT_ID" --client-secret="$INFISICAL_CLIENT_SECRET" --domain=https://eu.infisical.com --silent --plain 2>/dev/null)
-
-        if [ $? -eq 0 ] && [ -n "$INFISICAL_TOKEN" ]; then
-          echo "export INFISICAL_TOKEN=$INFISICAL_TOKEN" >> $BASH_ENV
-          echo "Machine Identity authentication successful"
-        else
-          echo "Machine Identity failed, trying Service Token..."
-          if [ -n "$INFISICAL_TOKEN_FALLBACK" ]; then
-            echo "export INFISICAL_TOKEN=$INFISICAL_TOKEN_FALLBACK" >> $BASH_ENV
-            echo "Service Token authentication successful"
-          else
-            echo "Error: Both Machine Identity and Service Token authentication failed"
-            exit 1
-          fi
-        fi
-      elif [ -n "$INFISICAL_TOKEN_FALLBACK" ]; then
-        echo "Using Service Token authentication..."
-        echo "export INFISICAL_TOKEN=$INFISICAL_TOKEN_FALLBACK" >> $BASH_ENV
-        echo "Service Token authentication successful"
-      else
-        echo "Error: No Infisical authentication method available"
-        echo "Please provide either:"
-        echo "- Machine Identity: INFISICAL_CLIENT_ID + INFISICAL_CLIENT_SECRET + INFISICAL_PROJECT_ID"
-        echo "- Service Token: INFISICAL_TOKEN_FALLBACK"
-        exit 1
-      fi
+      # Authenticate using machine identity and persist token
+      INFISICAL_TOKEN=$(infisical login --method=universal-auth --client-id="$INFISICAL_CLIENT_ID" --client-secret="$INFISICAL_CLIENT_SECRET" --domain=https://eu.infisical.com --silent --plain)
+      echo "export INFISICAL_TOKEN=$INFISICAL_TOKEN" >> $BASH_ENV
+      echo "Infisical authentication successful"
 
 # This main executor is used by all jobs unless otherwise specified
 executors:
@@ -228,22 +202,16 @@ jobs:
             REPOSITORY=$(echo "ghcr.io/$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME" | tr '[:upper:]' '[:lower:]' | tr -d '_')
             TAG=$(echo $CIRCLE_BRANCH | tr '[:upper:]' '[:lower:]' | tr '/' '-' | tr -cd '[:alnum:]._-' | cut -c 1-128)
 
-            # Export GHCR secrets directly to environment using Infisical (EU Cloud)
-            export $(infisical export --env=staging --path="/docker" --projectId="$INFISICAL_PROJECT_ID" --domain=https://eu.infisical.com --format=dotenv | xargs)
+            # Get application secrets from Infisical for Docker build
+            export $(infisical export --env=staging --path="/app" --projectId="$INFISICAL_PROJECT_ID" --domain=https://eu.infisical.com --format=dotenv | xargs)
 
-            # Verify credentials are available
-            if [ -z "$GHCR_PAT" ] || [ -z "$GHCR_USERNAME" ]; then
-              echo "Error: GHCR credentials not found in Infisical"
-              echo "Expected secrets in staging environment at /docker path:"
-              echo "- GHCR_PAT"
-              echo "- GHCR_USERNAME"
-              exit 1
-            fi
+            # Get GHCR credentials from Infisical
+            export $(infisical export --env=staging --path="/docker" --projectId="$INFISICAL_PROJECT_ID" --domain=https://eu.infisical.com --format=dotenv | xargs)
 
             # Login to GHCR using Infisical secrets
             echo "$GHCR_PAT" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
 
-            # Build the Docker image
+            # Build the Docker image with application secrets
             docker build \
             -f Docker/Dockerfile \
             -t $REPOSITORY:$TAG \
@@ -254,6 +222,7 @@ jobs:
             --build-arg SQLITE_VERSION=3430200 \
             --build-arg SQLITE_YEAR=2023 \
             --build-arg PROJECT_USERNAME=$CIRCLE_PROJECT_USERNAME \
+            --build-arg APP_SECRET="$APP_SECRET" \
             .
 
             # Push the Docker image
@@ -262,8 +231,6 @@ jobs:
   deploy-ssh-staging:
     executor: simple-executor
     steps:
-      - *install_infisical
-      - *setup_infisical
       - add_ssh_keys:
           fingerprints:
             - "${STAGING_SSH_FINGERPRINT}"
@@ -271,20 +238,6 @@ jobs:
           name: Deploy to AWS
           command: |
             set -x
-
-            # Export SSH secrets directly to environment using Infisical (EU Cloud)
-            export $(infisical export --env=staging --path="/ssh" --projectId="$INFISICAL_PROJECT_ID" --domain=https://eu.infisical.com --format=dotenv | xargs)
-
-            # Verify SSH credentials are available
-            if [ -z "$STAGING_SSH_USER" ] || [ -z "$STAGING_SSH_HOST" ] || [ -z "$STAGING_DEPLOY_DIRECTORY" ]; then
-              echo "Error: SSH deployment credentials not found in Infisical"
-              echo "Expected secrets in staging environment at /ssh path:"
-              echo "- STAGING_SSH_USER"
-              echo "- STAGING_SSH_HOST"
-              echo "- STAGING_DEPLOY_DIRECTORY"
-              exit 1
-            fi
-
             ssh -o StrictHostKeyChecking=no $STAGING_SSH_USER@$STAGING_SSH_HOST \<< EOF
             PHP_FPM_VERSION=\$(php -v | head -n 1 | cut -d ' ' -f 2 | cut -d '.' -f 1-2)
             cd $STAGING_DEPLOY_DIRECTORY

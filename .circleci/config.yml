@@ -324,14 +324,14 @@ jobs:
           command: |
             set -x
 
-            # Get production secrets from Infisical
-            export $(infisical export --env=production --path="/docker" --projectId="$INFISICAL_PROJECT_ID" --domain=https://eu.infisical.com --format=dotenv | xargs)
+            # Get GHCR credentials from Infisical (using staging environment like build job)
+            export $(infisical export --env=staging --path="/docker" --projectId="$INFISICAL_PROJECT_ID" --domain=https://eu.infisical.com --format=dotenv | xargs)
 
             # Sanitize the repository name and branch name for image tag
             REPOSITORY=$(echo "ghcr.io/triformine/php-devops-tp" | tr '[:upper:]' '[:lower:]')
             TAG=$(echo $CIRCLE_BRANCH | tr '[:upper:]' '[:lower:]' | tr '/' '-' | tr -cd '[:alnum:]._-' | cut -c 1-128)
 
-            # Deploy with Docker
+            # Deploy with Docker (private image, login required)
             ssh -o StrictHostKeyChecking=no $PRODUCTION_SSH_USER@$PRODUCTION_SSH_HOST \<< EOF
             set -e
 
@@ -346,17 +346,17 @@ jobs:
             fi
 
             # Login to GHCR
-            echo "$GHCR_PAT" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
+            echo "$GHCR_PAT" | sudo docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
 
             # Pull the latest image
-            docker pull $REPOSITORY:$TAG
+            sudo docker pull $REPOSITORY:$TAG
 
             # Stop and remove existing container
-            docker stop php-app || true
-            docker rm php-app || true
+            sudo docker stop php-app || true
+            sudo docker rm php-app || true
 
             # Run new container
-            docker run -d \
+            sudo docker run -d \
               --name php-app \
               --restart unless-stopped \
               -p 80:80 \

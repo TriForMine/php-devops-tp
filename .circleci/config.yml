@@ -293,19 +293,37 @@ jobs:
             # Push the Docker image
             docker push $REPOSITORY:$TAG
 
-  deploy-ssh-staging:
+  deploy-dev:
     executor: simple-executor
     steps:
       - add_ssh_keys:
           fingerprints:
-            - "${STAGING_SSH_FINGERPRINT}"
+            - "${DEV_SSH_FINGERPRINT}"
       - deploy:
-          name: Deploy to AWS
+          name: Deploy to Dev Server
           command: |
             set -x
-            ssh -o StrictHostKeyChecking=no $STAGING_SSH_USER@$STAGING_SSH_HOST \<< EOF
+            ssh -o StrictHostKeyChecking=no $DEV_SSH_USER@$DEV_SSH_HOST \<< EOF
             PHP_FPM_VERSION=\$(php -v | head -n 1 | cut -d ' ' -f 2 | cut -d '.' -f 1-2)
-            cd $STAGING_DEPLOY_DIRECTORY
+            cd $DEV_DEPLOY_DIRECTORY
+            git pull origin $CIRCLE_BRANCH
+            composer install --optimize-autoloader --no-interaction --prefer-dist
+            (flock -w 10 9 || exit 1; sudo -S service php\${PHP_FPM_VERSION}-fpm restart ) 9>/tmp/fmp.lock
+            EOF
+
+  deploy-test:
+    executor: simple-executor
+    steps:
+      - add_ssh_keys:
+          fingerprints:
+            - "${TEST_SSH_FINGERPRINT}"
+      - deploy:
+          name: Deploy to Test Server (Staging)
+          command: |
+            set -x
+            ssh -o StrictHostKeyChecking=no $TEST_SSH_USER@$TEST_SSH_HOST \<< EOF
+            PHP_FPM_VERSION=\$(php -v | head -n 1 | cut -d ' ' -f 2 | cut -d '.' -f 1-2)
+            cd $TEST_DEPLOY_DIRECTORY
             git pull origin $CIRCLE_BRANCH
             composer install --optimize-autoloader --no-interaction --prefer-dist
             (flock -w 10 9 || exit 1; sudo -S service php\${PHP_FPM_VERSION}-fpm restart ) 9>/tmp/fmp.lock
@@ -395,8 +413,9 @@ workflows:
       - metrics-phpinsights:
           requires:
             - build-setup
-      - hold:
-          type: approval
+
+      # Build Docker image for Main (Production)
+      - build-docker-image:
           requires:
             - lint-phpcs
             - lint-phpmd
@@ -409,34 +428,49 @@ workflows:
             branches:
               only:
                 - main
-                - master
-                - /^release\/.*/
+
+      # Deployments
+      - deploy-dev:
+          requires:
+            - lint-phpcs
+            - lint-phpmd
+            - lint-phpdoc-check
+            - security-check-dependencies
+            - test-phpunit
+            - metrics-phpmetrics
+            - metrics-phpinsights
+          filters:
+            branches:
+              only:
+                - dev
+
+      - deploy-test:
+          requires:
+            - lint-phpcs
+            - lint-phpmd
+            - lint-phpdoc-check
+            - security-check-dependencies
+            - test-phpunit
+            - metrics-phpmetrics
+            - metrics-phpinsights
+          filters:
+            branches:
+              only:
+                - staging
+
       - deploy-ssh-production:
           requires:
-            - hold
+            - build-docker-image
           filters:
             branches:
               only:
                 - main
-                - master
-      - deploy-ssh-staging:
-          requires:
-            - hold
-          filters:
-            branches:
-              only:
-                - /^release\/.*/
 
+  # Separate workflow to build images for other branches/purposes without deploying
   container_workflow:
     jobs:
       - build-docker-image:
           filters:
             branches:
-              only:
-                - master
-                - main
-                - develop
-                - /^feature\/.*/
-                - /^release\/.*/
-                - /^hotfix\/.*/
-                - /^bugfix\/.*/
+              ignore:
+                - main # Handled in main_workflow to ensure sequential deployment

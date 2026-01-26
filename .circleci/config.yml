@@ -311,7 +311,7 @@ jobs:
                 echo "PHP not found. Installing..."
                 export DEBIAN_FRONTEND=noninteractive
                 sudo -n apt-get update
-                sudo -n apt-get install -y php-cli php-fpm php-xml php-curl php-mbstring php-zip unzip git
+                sudo -n apt-get install -y php-cli php-fpm php-xml php-curl php-mbstring php-zip php-gd unzip git
             fi
 
             # 2. Install Composer if missing
@@ -360,7 +360,7 @@ jobs:
                 echo "PHP not found. Installing..."
                 export DEBIAN_FRONTEND=noninteractive
                 sudo -n apt-get update
-                sudo -n apt-get install -y php-cli php-fpm php-xml php-curl php-mbstring php-zip unzip git
+                sudo -n apt-get install -y php-cli php-fpm php-xml php-curl php-mbstring php-zip php-gd unzip git
             fi
 
             # 2. Install Composer if missing

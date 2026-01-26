@@ -305,7 +305,12 @@ jobs:
             set -x
             ssh -o StrictHostKeyChecking=no $DEV_SSH_USER@$DEV_SSH_HOST \<< EOF
             PHP_FPM_VERSION=\$(php -v | head -n 1 | cut -d ' ' -f 2 | cut -d '.' -f 1-2)
-            cd $DEV_DEPLOY_DIRECTORY
+            if [ ! -d "$DEV_DEPLOY_DIRECTORY" ]; then
+              echo "Directory does not exist. Cloning..."
+              git clone https://github.com/TriForMine/php-devops-tp.git "$DEV_DEPLOY_DIRECTORY"
+            fi
+            cd "$DEV_DEPLOY_DIRECTORY"
+            git checkout $CIRCLE_BRANCH
             git pull origin $CIRCLE_BRANCH
             composer install --optimize-autoloader --no-interaction --prefer-dist
             (flock -w 10 9 || exit 1; sudo -S service php\${PHP_FPM_VERSION}-fpm restart ) 9>/tmp/fmp.lock
@@ -323,7 +328,12 @@ jobs:
             set -x
             ssh -o StrictHostKeyChecking=no $TEST_SSH_USER@$TEST_SSH_HOST \<< EOF
             PHP_FPM_VERSION=\$(php -v | head -n 1 | cut -d ' ' -f 2 | cut -d '.' -f 1-2)
-            cd $TEST_DEPLOY_DIRECTORY
+            if [ ! -d "$TEST_DEPLOY_DIRECTORY" ]; then
+              echo "Directory does not exist. Cloning..."
+              git clone https://github.com/TriForMine/php-devops-tp.git "$TEST_DEPLOY_DIRECTORY"
+            fi
+            cd "$TEST_DEPLOY_DIRECTORY"
+            git checkout $CIRCLE_BRANCH
             git pull origin $CIRCLE_BRANCH
             composer install --optimize-autoloader --no-interaction --prefer-dist
             (flock -w 10 9 || exit 1; sudo -S service php\${PHP_FPM_VERSION}-fpm restart ) 9>/tmp/fmp.lock

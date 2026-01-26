@@ -304,16 +304,42 @@ jobs:
           command: |
             set -x
             ssh -o StrictHostKeyChecking=no $DEV_SSH_USER@$DEV_SSH_HOST \<< EOF
-            PHP_FPM_VERSION=\$(php -v | head -n 1 | cut -d ' ' -f 2 | cut -d '.' -f 1-2)
+            set -e
+
+            # 1. Install PHP/Common deps if missing
+            if ! command -v php &> /dev/null; then
+                echo "PHP not found. Installing..."
+                export DEBIAN_FRONTEND=noninteractive
+                sudo -n apt-get update
+                sudo -n apt-get install -y php-cli php-fpm php-xml php-curl php-mbstring php-zip unzip git
+            fi
+
+            # 2. Install Composer if missing
+            if ! command -v composer &> /dev/null; then
+                echo "Composer not found. Installing..."
+                curl -sS https://getcomposer.org/installer -o composer-setup.php
+                sudo -n php composer-setup.php --install-dir=/usr/local/bin --filename=composer
+                rm composer-setup.php
+            fi
+
+            # 3. Handle Permissions & Clone
             if [ ! -d "$DEV_DEPLOY_DIRECTORY" ]; then
-              echo "Directory does not exist. Cloning..."
+              echo "Directory does not exist. Creating and Cloning..."
+              sudo -n mkdir -p "$DEV_DEPLOY_DIRECTORY"
+              sudo -n chown \$USER:\$USER "$DEV_DEPLOY_DIRECTORY"
               git clone https://github.com/TriForMine/php-devops-tp.git "$DEV_DEPLOY_DIRECTORY"
             fi
+
             cd "$DEV_DEPLOY_DIRECTORY"
+            sudo -n chown -R \$USER:\$USER .
+
+            git fetch origin
             git checkout $CIRCLE_BRANCH
             git pull origin $CIRCLE_BRANCH
             composer install --optimize-autoloader --no-interaction --prefer-dist
-            (flock -w 10 9 || exit 1; sudo -S service php\${PHP_FPM_VERSION}-fpm restart ) 9>/tmp/fmp.lock
+
+            PHP_FPM_VERSION=\$(php -v | head -n 1 | cut -d ' ' -f 2 | cut -d '.' -f 1-2)
+            sudo -n service php\${PHP_FPM_VERSION}-fpm restart
             EOF
 
   deploy-test:
@@ -327,16 +353,42 @@ jobs:
           command: |
             set -x
             ssh -o StrictHostKeyChecking=no $TEST_SSH_USER@$TEST_SSH_HOST \<< EOF
-            PHP_FPM_VERSION=\$(php -v | head -n 1 | cut -d ' ' -f 2 | cut -d '.' -f 1-2)
+            set -e
+
+            # 1. Install PHP/Common deps if missing
+            if ! command -v php &> /dev/null; then
+                echo "PHP not found. Installing..."
+                export DEBIAN_FRONTEND=noninteractive
+                sudo -n apt-get update
+                sudo -n apt-get install -y php-cli php-fpm php-xml php-curl php-mbstring php-zip unzip git
+            fi
+
+            # 2. Install Composer if missing
+            if ! command -v composer &> /dev/null; then
+                echo "Composer not found. Installing..."
+                curl -sS https://getcomposer.org/installer -o composer-setup.php
+                sudo -n php composer-setup.php --install-dir=/usr/local/bin --filename=composer
+                rm composer-setup.php
+            fi
+
+            # 3. Handle Permissions & Clone
             if [ ! -d "$TEST_DEPLOY_DIRECTORY" ]; then
-              echo "Directory does not exist. Cloning..."
+              echo "Directory does not exist. Creating and Cloning..."
+              sudo -n mkdir -p "$TEST_DEPLOY_DIRECTORY"
+              sudo -n chown \$USER:\$USER "$TEST_DEPLOY_DIRECTORY"
               git clone https://github.com/TriForMine/php-devops-tp.git "$TEST_DEPLOY_DIRECTORY"
             fi
+
             cd "$TEST_DEPLOY_DIRECTORY"
+            sudo -n chown -R \$USER:\$USER .
+
+            git fetch origin
             git checkout $CIRCLE_BRANCH
             git pull origin $CIRCLE_BRANCH
             composer install --optimize-autoloader --no-interaction --prefer-dist
-            (flock -w 10 9 || exit 1; sudo -S service php\${PHP_FPM_VERSION}-fpm restart ) 9>/tmp/fmp.lock
+
+            PHP_FPM_VERSION=\$(php -v | head -n 1 | cut -d ' ' -f 2 | cut -d '.' -f 1-2)
+            sudo -n service php\${PHP_FPM_VERSION}-fpm restart
             EOF
 
   deploy-ssh-production:
